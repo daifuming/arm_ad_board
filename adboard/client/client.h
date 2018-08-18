@@ -6,8 +6,8 @@
 
 #define FB0_PATH "/dev/fb0"
 
-#define SERVER_ADDR "192.168.110.176" 	/* 服务端地址 */
-#define SERVER_PORT 6677				/* 服务端端口 */
+#define SERVER_ADDR "192.168.110.177" 	/* 服务端地址 */
+#define SERVER_PORT 6789				/* 服务端端口 */
 
 #define JSON_BUF_SIZE 1024				/* 保存json数据的buf大小 */
 

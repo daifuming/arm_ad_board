@@ -5,6 +5,8 @@
 #include "kernel_list.h"
 #include "message.h"
 #include "video.h"
+#include "weather.h"
+#include "beijing_time.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,6 +22,8 @@
 #include <sys/socket.h>			/* socket    */
 #include <netinet/in.h>			/* inet_addr */
 #include <arpa/inet.h>			/* htons     */
+#include <sys/wait.h>
+
 
 bool vid_change;
 bool msg_change;
@@ -55,14 +59,20 @@ int main(int argc, char const *argv[])
 
 	pthread_t msg_pid = 0;
 	pthread_t vid_pid = 0;
+	pthread_t wth_pid = 0;
+	pthread_t tim_pid = 0;
 	bool msg_init = false;
 	bool vid_init = false;
 
 	//创建线程显示天气
+	char *city = "101010100";
+	pthread_create(&wth_pid, NULL, weather, (void *)city);
 	//创建线程显示时间
+	beijing_time();	//校准北京时间
+	pthread_create(&tim_pid, NULL, show_time, NULL);
 
 	//创建管道文件用于控制mplayer退出
-	mkfifo("/fifo", 0777);
+	//mkfifo("/fifo", 0777);
 
 	//读取服务端消息
 	vid_change = false;
@@ -81,12 +91,13 @@ int main(int argc, char const *argv[])
 			//write_log
 			printf("connect disable\n");
 			sockfd = connect_server();
+			continue;
 		}
 
 		/**
-	 * 创建两个NAMELIST
-	 * 用于保存视频列表和广告消息列表
-	 */
+		 * 创建两个NAMELIST
+		 * 用于保存视频列表和广告消息列表
+		 */
 		NAMELIST *vid_head = init_list();
 		NAMELIST *msg_head = init_list();
 
@@ -102,18 +113,40 @@ int main(int argc, char const *argv[])
 
 		if (vid_change)
 		{
-			/**
-			 * 视频列表有更新
-			 * 创建线程
-			 */
+			//检查文件是否存在
+			//存在则写进playlist.lst
+			//否则写进列表并创建线程进行下载
+			update_list(vid_head);
+
 			if (vid_init)
 			{
-				pthread_cancel(vid_pid);
-				int fd = open("/fifo", O_RDWR);
-				write(fd, "quit\n", strlen("quit\n"));		//通过管道关闭mplayer进程
-				close(fd);
+				// system("killall mplayer");				//关闭mplayer进程
+				// pthread_cancel(vid_pid);				//关闭线程
+				pid_t pid = fork();
+				if (pid < 0)
+				{
+					perror("fork fail");
+				}
+				if (pid == 0)
+				{
+					//mplayer -zoom -x 680 -y 400 -loop 0 -playlist  /massstorage/playlist.lst
+					execlp("/bin/killall", "killall", "mplayer", NULL);
+				}
+				int status = 0;
+				waitpid(pid, &status,0);
+				
 			}
-			pthread_create(&vid_pid, NULL, play_vid, (void *)vid_head);	//vid_head在线程函数中被销毁
+			pid_t pid = fork();
+			if (pid < 0)
+			{
+				perror("fork fail");
+			}
+			if (pid == 0)
+			{
+				//mplayer -zoom -x 680 -y 400 -loop 0 -playlist  /massstorage/playlist.lst
+				execlp("/mplayer", "mplayer", "-zoom", "-x", "680", "-y", "400", "-loop", "0","-slave", "-playlist", "/massstorage/playlist.lst", NULL);
+			}
+			//pthread_create(&vid_pid, NULL, play_vid, (void *)vid_head);	//vid_head在线程函数中被销毁
 			vid_change =  false;
 			vid_init = true;
 		}else { destroy_list(vid_head); }
@@ -125,20 +158,16 @@ int main(int argc, char const *argv[])
 			{
 				printf("cancel pthread [%d]\n", msg_pid);
 				pthread_cancel(msg_pid);
-				//sleep(2);
-				//struct Rect rect = {0,400,800,480};
-				pthread_mutex_lock(&mutex);			//上锁
+				pthread_mutex_lock(&mutex);				//上锁
 				memset(lcd ->mp + 400*lcd ->width, 0x00, 800*80*4);
-				pthread_mutex_unlock(&mutex);			//上锁
-				
+				pthread_mutex_unlock(&mutex);			//解锁
 			}
 			pthread_create(&msg_pid, NULL, ad_msg, (void *)msg_head);	//msg_list在线程函数中被销毁
 			msg_change = false;
 			msg_init = true;
 		}else { destroy_list(msg_head); }
-
-
 	}
+
 
 	close(sockfd);
 	destroy_lcd(lcd);
@@ -271,6 +300,7 @@ void analyze_json(char *json, NAMELIST *vid_head, NAMELIST *msg_head)
 		printf("%s\n", obj ->valuestring);
 		/* code here */
 		add_node(vid_head, obj ->valuestring);
+		//在视频更新完后赋值为true
 		vid_change = true;
 	}
 
